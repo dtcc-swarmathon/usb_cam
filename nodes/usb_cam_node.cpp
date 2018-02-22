@@ -41,6 +41,9 @@
 #include <sstream>
 #include <std_srvs/Empty.h>
 
+#include <opencv/cv.h>
+#include <cv_bridge/cv_bridge.h>
+
 namespace usb_cam {
 
 class UsbCamNode
@@ -52,7 +55,7 @@ public:
   // shared image message
   sensor_msgs::Image img_;
   image_transport::CameraPublisher image_pub_;
-
+   
   // parameters
   std::string video_device_name_, io_method_name_, pixel_format_name_, camera_name_, camera_info_url_;
   //std::string start_service_name_, start_service_name_;
@@ -225,22 +228,70 @@ public:
   {
     cam_.shutdown();
   }
+  
+  cv::Mat kumaraswamy(cv::Mat intput, double alpha, double beta)
+  {
+      cv::Mat returnValue;
+      cv::pow(intput, alpha, returnValue);
+      returnValue = cv::Scalar::all(1.0) - returnValue;
+      cv::pow(returnValue, beta, returnValue);
+      returnValue = cv::Scalar::all(1.0) - returnValue;
+      return returnValue;
+  }
+  
+  void cameraSource_Callback( sensor_msgs::Image &sourceMessage, sensor_msgs::CameraInfoPtr &cam_info)
+  {
+      cv_bridge::CvImagePtr cv_ptr;
+      try
+      {
+          cv_ptr = cv_bridge::toCvCopy(sourceMessage, sensor_msgs::image_encodings::BGR8);
+      }
+      catch (cv_bridge::Exception& e)
+      {
+          ROS_ERROR("cv_bridge exception: %s", e.what());
+          ROS_ERROR("SOHAM YOU MESSED UP HERE");
+          return;
+      }
+      cv::Mat gray;
+      cv::cvtColor(cv_ptr->image, gray, CV_BGR2GRAY);
+      cv::Mat intensity;
+      cv::normalize(gray, intensity, 0.0f, 1.0f, cv::NORM_MINMAX, CV_64F);
+      
+      cv::Mat remapped, normalized;
+      remapped = cv::Scalar::all(1.0) - kumaraswamy(cv::Scalar::all(1.0) - intensity, 6.0, 3.0);
+        
+      cv::normalize(remapped, normalized, 0, 0xFFFF, cv::NORM_MINMAX, CV_16UC1);
+      cv_bridge::CvImage filteredImg = cv_bridge::CvImage(sourceMessage.header, sensor_msgs::image_encodings::MONO16, normalized);
 
+      //Publish filtered image for further processing
+      image_pub_.publish(filteredImg.toImageMsg(), cam_info);
+  }
+  
   bool take_and_send_image()
   {
     // grab the image
-    cam_.grab_image(&img_);
+    cam_.grab_image(& img_);
 
     // grab the camera info
     sensor_msgs::CameraInfoPtr ci(new sensor_msgs::CameraInfo(cinfo_->getCameraInfo()));
     ci->header.frame_id = img_.header.frame_id;
     ci->header.stamp = img_.header.stamp;
 
+    //Apply camera glare reduction here//
+       
+    cameraSource_Callback(img_, ci);  
+       
     // publish the image
-    image_pub_.publish(img_, *ci);
+    //image_pub_.publish(img_, *ci);
 
     return true;
   }
+
+
+
+
+  
+
 
   bool spin()
   {
