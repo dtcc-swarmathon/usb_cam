@@ -249,9 +249,10 @@ public:
       catch (cv_bridge::Exception& e)
       {
           ROS_ERROR("cv_bridge exception: %s", e.what());
-          ROS_ERROR("SOHAM YOU MESSED UP HERE");
           return;
       }
+
+      /*
       cv::Mat gray;
       cv::cvtColor(cv_ptr->image, gray, CV_BGR2GRAY);
       cv::Mat intensity;
@@ -262,9 +263,36 @@ public:
         
       cv::normalize(remapped, normalized, 0, 0xFFFF, cv::NORM_MINMAX, CV_16UC1);
       cv_bridge::CvImage filteredImg = cv_bridge::CvImage(sourceMessage.header, sensor_msgs::image_encodings::MONO16, normalized);
+      */
 
-      //Publish filtered image for further processing
-      image_pub_.publish(filteredImg.toImageMsg(), cam_info);
+
+      cv::Mat lab_image;
+      cv::Mat bgr_image = cv_ptr->image;
+      cv::cvtColor(bgr_image, lab_image, CV_BGR2Lab);
+      std::vector<cv::Mat> lab_planes(3);
+      cv::split(lab_image, lab_planes);  // now we have the L image in lab_planes[0]
+
+      // apply the CLAHE algorithm to the L channel
+      cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE();
+      clahe->setClipLimit(4);
+      cv::Mat dst;
+      clahe->apply(lab_planes[0], dst);
+
+      // Merge the the color planes back into an Lab image
+      dst.copyTo(lab_planes[0]);
+      cv::merge(lab_planes, lab_image);
+
+     // convert back to RGB
+     cv::Mat image_clahe;
+     cv::cvtColor(lab_image, image_clahe, CV_Lab2BGR);
+
+     // display the results  (you might also want to see lab_planes[0] before and after).
+     //cv::imshow("image original", bgr_image);
+     //cv::imshow("image CLAHE", image_clahe);
+     cv_bridge::CvImage filteredImg = cv_bridge::CvImage(sourceMessage.header, sensor_msgs::image_encodings::MONO16, image_clahe);    
+
+     //Publish filtered image for further processing
+     image_pub_.publish(filteredImg.toImageMsg(), cam_info);
   }
   
   bool take_and_send_image()
